@@ -1,0 +1,71 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智能爽文背单词</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400..900;1,400..900&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --maillard-bg: #FDFBF9;
+            --maillard-latte: #F4ECE4;
+            --maillard-toffee: #A67B5B;
+            --maillard-coffee: #6F4E37;
+            --maillard-espresso: #3D2B1F;
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--maillard-bg);
+            color: var(--maillard-espresso);
+        }
+        .serif-font {
+            font-family: 'Playfair Display', serif;
+        }
+        .maillard-btn-primary {
+            background-color: var(--maillard-espresso);
+            color: #FDFBF9;
+        }
+        .keyword-highlight {
+            color: var(--maillard-espresso);
+            font-weight: 700;
+            text-decoration: underline;
+            text-decoration-color: var(--maillard-toffee);
+            text-underline-offset: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .keyword-highlight:hover {
+            color: var(--maillard-toffee);
+        }
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: var(--maillard-bg);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: var(--maillard-latte);
+            border-radius: 10px;
+        }
+    </style>
+<script type="importmap">
+{
+  "imports": {
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "react": "https://esm.sh/react@^19.2.3",
+    "lucide-react": "https://esm.sh/lucide-react@^0.562.0",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "@google/genai": "https://esm.sh/@google/genai@^1.35.0",
+    "react-router-dom": "https://esm.sh/react-router-dom@^7.12.0",
+    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2",
+    "vite": "https://esm.sh/vite@^7.3.1"
+  }
+}
+</script>
+</head>
+<body>
+    <div id="root"></div>
+</body>
+</html>
