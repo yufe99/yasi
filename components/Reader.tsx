@@ -1,7 +1,8 @@
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Story, VocabularyWord, UserProgress } from '../types';
+import { GoogleGenAI, Modality } from "@google/genai";
 import { 
   ArrowLeft, 
   Volume2, 
@@ -15,8 +16,33 @@ import {
   ArrowRight,
   ChevronLeft,
   Home,
-  List
+  List,
+  Play,
+  Pause,
+  Headphones,
+  Zap,
+  Turtle
 } from 'lucide-react';
+
+// --- Audio Decoding Helpers ---
+function decodeBase64(base64: string) {
+  const binaryString = atob(base64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes;
+}
+
+async function decodeAudioData(data: Uint8Array, ctx: AudioContext): Promise<AudioBuffer> {
+  const dataInt16 = new Int16Array(data.buffer);
+  const buffer = ctx.createBuffer(1, dataInt16.length, 24000);
+  const channelData = buffer.getChannelData(0);
+  for (let i = 0; i < dataInt16.length; i++) {
+    channelData[i] = dataInt16[i] / 32768.0;
+  }
+  return buffer;
+}
 
 interface ReaderProps {
   stories: Story[];
@@ -33,25 +59,22 @@ const Reader: React.FC<ReaderProps> = ({ stories, progress, isGenerating, onColl
   const navigate = useNavigate();
   const [selectedWord, setSelectedWord] = useState<VocabularyWord | null>(null);
   const [showChapters, setShowChapters] = useState(false);
+  const [isPlayingFull, setIsPlayingFull] = useState(false);
+  const [audioLoading, setAudioLoading] = useState<string | null>(null); // 'standard' | 'slow' | 'full' | null
+  
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const sourceNodeRef = useRef<AudioBufferSourceNode | null>(null);
 
   const story = useMemo(() => stories.find(s => s.id === storyId), [stories, storyId]);
   
-  // 查找整个系列的章节列表
   const seriesChapters = useMemo(() => {
     if (!story) return [];
-    
-    // 1. 找到根节点
     let root = story;
     const visited = new Set();
     while (root.prevId && !visited.has(root.prevId)) {
       const prev = stories.find(s => s.id === root.prevId);
-      if (prev) {
-        root = prev;
-        visited.add(root.id);
-      } else break;
+      if (prev) { root = prev; visited.add(root.id); } else break;
     }
-    
-    // 2. 从根节点开始往后推
     const list: Story[] = [];
     let current: Story | undefined = root;
     const visitedForward = new Set();
@@ -68,102 +91,112 @@ const Reader: React.FC<ReaderProps> = ({ stories, progress, isGenerating, onColl
       onStoryRead(story.id);
     }
     window.scrollTo(0, 0);
-  }, [story, progress.isVip, progress.completedStories, onStoryRead]);
+    return () => stopAudio();
+  }, [storyId]);
 
-  if (!story) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] text-center p-8 animate-in fade-in">
-        <div className="w-20 h-20 bg-[#F4ECE4] rounded-full flex items-center justify-center mb-6">
-          <Sparkles className="text-[#A67B5B] opacity-20" size={32} />
-        </div>
-        <h2 className="serif-font text-xl font-bold text-[#3D2B1F] mb-2">剧集已消散在虚空中</h2>
-        <p className="text-xs text-gray-400 mb-8">该剧集 ID 已失效或不存在，请返回书架重新开启修行。</p>
-        <button 
-          onClick={() => navigate('/')}
-          className="bg-[#3D2B1F] text-white px-8 py-3 rounded-2xl font-bold text-xs flex items-center space-x-2 active:scale-95 transition-all shadow-lg"
-        >
-          <Home size={14} />
-          <span>回到书架</span>
-        </button>
-      </div>
-    );
-  }
+  const stopAudio = () => {
+    if (sourceNodeRef.current) {
+      sourceNodeRef.current.stop();
+      sourceNodeRef.current = null;
+    }
+    setIsPlayingFull(false);
+  };
 
-  const isLocked = !progress.isVip && progress.freeStoriesRead > 3 && !progress.completedStories.includes(story.id);
+  const playTTS = async (text: string, type: 'standard' | 'slow' | 'full' = 'standard') => {
+    if (isPlayingFull && type === 'full') {
+      stopAudio();
+      return;
+    }
+
+    setAudioLoading(type);
+    try {
+      if (!audioContextRef.current) {
+        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+      }
+
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      
+      let prompt = "";
+      if (type === 'full') {
+        prompt = `Read the following story slowly and clearly for an IELTS learner. Maintain a sophisticated and professional tone: ${text}`;
+      } else if (type === 'slow') {
+        prompt = `Pronounce this word extremely slowly, breaking down each syllable clearly for a language learner: ${text}`;
+      } else {
+        prompt = `Pronounce this word clearly at a standard professional speed: ${text}`;
+      }
+
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash-preview-tts",
+        contents: [{ parts: [{ text: prompt }] }],
+        config: {
+          responseModalities: [Modality.AUDIO],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName: 'Kore' }
+            }
+          }
+        }
+      });
+
+      const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+      if (base64Audio) {
+        const audioBuffer = await decodeAudioData(decodeBase64(base64Audio), audioContextRef.current);
+        stopAudio();
+        
+        const source = audioContextRef.current.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(audioContextRef.current.destination);
+        source.onended = () => {
+          if (type === 'full') setIsPlayingFull(false);
+          setAudioLoading(null);
+        };
+        
+        source.start(0);
+        sourceNodeRef.current = source;
+        if (type === 'full') setIsPlayingFull(true);
+      }
+    } catch (error) {
+      console.error("TTS Error:", error);
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = type === 'slow' ? 0.5 : 0.85; 
+      utterance.lang = 'en-GB';
+      window.speechSynthesis.speak(utterance);
+      setAudioLoading(null);
+    }
+  };
+
+  if (!story) return null;
 
   const handleWordClick = (wordId: string) => {
     const word = story.vocabulary.find(v => v.id === wordId);
     if (word) setSelectedWord(word);
   };
 
-  const handleNextAction = () => {
-    if (story.nextId) {
-      navigate(`/reader/${story.nextId}`);
-    } else {
-      onExtend(story);
-    }
-  };
-
-  const speak = (text: string) => {
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'en-GB';
-    window.speechSynthesis.speak(utterance);
-  };
-
-  if (isLocked) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[70vh] text-center p-8 animate-in zoom-in-95 duration-300">
-        <div className="w-24 h-24 bg-[#F4ECE4] rounded-full flex items-center justify-center mb-6 shadow-inner">
-          <Lock className="text-[#A67B5B]" size={40} />
-        </div>
-        <div className="space-y-4">
-          <h2 className="serif-font text-2xl font-bold text-[#3D2B1F]">开启精英特权</h2>
-          <p className="text-sm text-gray-500 leading-relaxed max-w-[240px] mx-auto">
-            订阅 VIP 以解锁 <span className="font-bold text-[#A67B5B]">无限剧情续写</span> 功能，让您的雅思进阶之路永不断续。
-          </p>
-        </div>
-        <div className="w-full mt-10 space-y-3">
-          <button 
-            onClick={() => navigate('/profile')}
-            className="w-full bg-[#3D2B1F] text-white py-4 rounded-2xl font-bold shadow-xl flex items-center justify-center group active:scale-95 transition-all"
-          >
-            <span>订阅 VIP 特权</span>
-            <ChevronRight size={18} className="ml-2" />
-          </button>
-          <button 
-            onClick={() => navigate('/')}
-            className="w-full py-4 text-gray-400 font-bold text-xs"
-          >
-            返回书架
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="animate-in fade-in duration-500 pb-24">
       {/* Reader Header */}
       <div className="flex items-center justify-between mb-8 sticky top-0 py-4 bg-[#FDFBF9]/90 backdrop-blur-md z-30 border-b border-[#F4ECE4]/30">
         <div className="flex items-center space-x-1">
-          <button 
-            onClick={() => navigate(-1)}
-            className="p-2 hover:bg-[#F4ECE4] rounded-full transition-colors text-[#6F4E37]"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </button>
-          <button 
-            onClick={() => setShowChapters(true)}
-            className="p-2 hover:bg-[#F4ECE4] rounded-full transition-colors text-[#A67B5B] flex items-center space-x-1"
-          >
-            <List size={18} />
-            <span className="text-[10px] font-bold">集目录</span>
+          <button onClick={() => navigate(-1)} className="p-2 hover:bg-[#F4ECE4] rounded-full text-[#6F4E37]"><ArrowLeft className="w-5 h-5" /></button>
+          <button onClick={() => setShowChapters(true)} className="p-2 hover:bg-[#F4ECE4] rounded-full text-[#A67B5B] flex items-center space-x-1">
+            <List size={18} /><span className="text-[10px] font-bold">集目录</span>
           </button>
         </div>
-        <div className="flex items-center space-x-2">
-           <span className="text-[10px] font-bold text-[#A67B5B] uppercase tracking-[0.3em]">{story.genre}</span>
-           {story.isUserGenerated && <span className="text-[8px] font-black bg-[#3D2B1F] text-white px-1.5 py-0.5 rounded">AI 私人定制</span>}
-        </div>
+        
+        <button 
+          onClick={() => playTTS(story.blindContent, 'full')}
+          disabled={!!audioLoading}
+          className={`flex items-center space-x-2 px-4 py-2 rounded-full border transition-all ${isPlayingFull ? 'bg-[#3D2B1F] border-[#3D2B1F] text-white' : 'bg-white border-[#F4ECE4] text-[#A67B5B] shadow-sm'}`}
+        >
+          {audioLoading === 'full' ? (
+            <Loader2 size={14} className="animate-spin" />
+          ) : isPlayingFull ? (
+            <Pause size={14} fill="currentColor" />
+          ) : (
+            <Headphones size={14} />
+          )}
+          <span className="text-[10px] font-bold tracking-widest">{isPlayingFull ? '暂停修行' : '雅思精听'}</span>
+        </button>
       </div>
 
       <div className="flex-grow">
@@ -173,18 +206,15 @@ const Reader: React.FC<ReaderProps> = ({ stories, progress, isGenerating, onColl
              <span className="text-[9px] font-black text-[#A67B5B] uppercase tracking-widest">Episode {seriesChapters.indexOf(story) + 1}</span>
              <div className="h-px w-8 bg-[#A67B5B]/20" />
           </div>
-          <h1 className="serif-font text-2xl font-bold text-[#3D2B1F] leading-tight mb-2">{story.title}</h1>
+          <h1 className="serif-font text-2xl font-bold text-[#3D2B1F] mb-2">{story.title}</h1>
           <p className="text-xs text-[#A67B5B] font-medium italic opacity-80">{story.tagline}</p>
         </div>
 
-        {/* Story Content */}
         <div className="bg-white rounded-[2.5rem] p-7 md:p-10 shadow-sm border border-[#F4ECE4] mb-12 min-h-[350px]">
           <div className="text-[1.1rem] leading-[2] text-[#3D2B1F] tracking-wide font-normal whitespace-pre-line">
             {story.immersionContent.map((part, idx) => (
               <span key={idx}>
-                {part.type === 'text' ? (
-                  part.content
-                ) : (
+                {part.type === 'text' ? part.content : (
                   <button 
                     onClick={() => handleWordClick(part.wordId!)}
                     className="relative inline-block mx-1 font-bold text-[#3D2B1F] transition-all hover:text-[#A67B5B]"
@@ -198,89 +228,27 @@ const Reader: React.FC<ReaderProps> = ({ stories, progress, isGenerating, onColl
           </div>
         </div>
 
-        {/* Story Footer Actions */}
         <div className="px-2 space-y-6">
           <div className="flex flex-col items-center">
             <div className="h-px bg-[#F4ECE4] w-full mb-4" />
-            <p className="text-[10px] text-[#A67B5B] font-bold uppercase tracking-widest">CHAPTER END</p>
+            <p className="text-[10px] text-[#A67B5B] font-bold uppercase tracking-widest">修行至此</p>
           </div>
-          
-          <div className="flex flex-col space-y-3">
-             <div className="grid grid-cols-2 gap-3">
-                {story.prevId && (
-                  <button 
-                    onClick={() => navigate(`/reader/${story.prevId}`)}
-                    className="py-5 bg-white border border-[#F4ECE4] text-[#6F4E37] rounded-2xl font-bold flex items-center justify-center space-x-2 active:scale-95 transition-all shadow-sm"
-                  >
-                    <ChevronLeft size={18} />
-                    <span>前一集</span>
-                  </button>
-                )}
-                
-                <button 
-                  onClick={handleNextAction}
-                  disabled={isGenerating}
-                  className={`py-5 bg-[#3D2B1F] text-white rounded-2xl font-bold flex items-center justify-center space-x-2 shadow-xl active:scale-95 transition-all disabled:opacity-50 ${story.prevId ? 'col-span-1' : 'col-span-2'}`}
-                >
-                  {isGenerating ? (
-                    <><Loader2 className="animate-spin" size={18} /><span>正在构思...</span></>
-                  ) : (
-                    <>
-                      {story.nextId ? (
-                        <><span>续看下章</span><ArrowRight size={18} /></>
-                      ) : (
-                        <><Sparkles size={18} className="text-[#A67B5B]" /><span>开启下章修行</span></>
-                      )}
-                    </>
-                  )}
-                </button>
-             </div>
-             
+          <div className="grid grid-cols-2 gap-3">
+             {story.prevId && (
+               <button onClick={() => navigate(`/reader/${story.prevId}`)} className="py-5 bg-white border border-[#F4ECE4] text-[#6F4E37] rounded-2xl font-bold flex items-center justify-center space-x-2 active:scale-95 transition-all shadow-sm">
+                 <ChevronLeft size={18} /><span>上一章</span>
+               </button>
+             )}
              <button 
-               onClick={() => navigate('/')}
-               className="w-full py-4 text-gray-400 font-bold text-xs hover:text-[#A67B5B] transition-colors"
+               onClick={() => story.nextId ? navigate(`/reader/${story.nextId}`) : onExtend(story)}
+               disabled={isGenerating}
+               className={`py-5 bg-[#3D2B1F] text-white rounded-2xl font-bold flex items-center justify-center space-x-2 shadow-xl active:scale-95 transition-all disabled:opacity-50 ${story.prevId ? 'col-span-1' : 'col-span-2'}`}
              >
-               回到目录
+               {isGenerating ? <Loader2 className="animate-spin" size={18} /> : (story.nextId ? <><span>续看下章</span><ArrowRight size={18} /></> : <><Sparkles size={18} className="text-[#A67B5B]" /><span>开启下章</span></>)}
              </button>
           </div>
         </div>
       </div>
-
-      {/* Chapters Side Menu Overlay */}
-      {showChapters && (
-        <div className="fixed inset-0 z-[100] flex animate-in fade-in">
-           <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setShowChapters(false)} />
-           <div className="relative w-4/5 max-w-xs bg-white h-full shadow-2xl animate-in slide-in-from-left duration-300 flex flex-col">
-              <div className="p-6 border-b border-[#F4ECE4]">
-                 <div className="flex justify-between items-center mb-2">
-                    <h3 className="serif-font text-lg font-bold text-[#3D2B1F]">本集列表</h3>
-                    <button onClick={() => setShowChapters(false)}><X size={20} className="text-gray-300" /></button>
-                 </div>
-                 <p className="text-[10px] text-[#A67B5B] font-bold uppercase tracking-widest">Series Chapters</p>
-              </div>
-              <div className="flex-grow overflow-y-auto p-4 space-y-2">
-                 {seriesChapters.map((ch, idx) => (
-                    <button 
-                      key={ch.id}
-                      onClick={() => {
-                        navigate(`/reader/${ch.id}`);
-                        setShowChapters(false);
-                      }}
-                      className={`w-full text-left p-4 rounded-2xl transition-all border ${ch.id === story.id ? 'bg-[#3D2B1F] text-white border-[#3D2B1F] shadow-lg' : 'bg-[#FAF7F2] border-[#F4ECE4] text-[#3D2B1F]'}`}
-                    >
-                       <p className="text-[9px] font-black uppercase tracking-wider opacity-60 mb-1">Chapter {idx + 1}</p>
-                       <p className="text-xs font-bold line-clamp-1">{ch.title}</p>
-                    </button>
-                 ))}
-              </div>
-              <div className="p-6 bg-[#FAF7F2]">
-                 <p className="text-[9px] text-gray-400 leading-relaxed italic">
-                   “所谓邪修，不过是比凡人更懂得在极致的欲望中保持清醒。”
-                 </p>
-              </div>
-           </div>
-        </div>
-      )}
 
       {/* Word Details Overlay */}
       {selectedWord && (
@@ -289,18 +257,30 @@ const Reader: React.FC<ReaderProps> = ({ stories, progress, isGenerating, onColl
             <div className="p-8">
               <div className="flex justify-between items-start mb-6">
                 <div>
-                  <h2 className="serif-font text-2xl font-bold text-[#3D2B1F] flex items-center">
-                    {selectedWord.word}
-                    <button 
-                      onClick={() => speak(selectedWord.word)}
-                      className="ml-2 p-1.5 bg-[#FAF7F2] rounded-full text-[#A67B5B] active:bg-[#F4ECE4] transition-colors"
-                    >
-                      <Volume2 className="w-3.5 h-3.5" />
-                    </button>
-                  </h2>
+                  <h2 className="serif-font text-2xl font-bold text-[#3D2B1F]">{selectedWord.word}</h2>
                   <p className="text-gray-400 font-mono text-[10px] mt-1">{selectedWord.phonetic} • <span className="text-[#A67B5B] font-bold">{selectedWord.level}</span></p>
                 </div>
                 <button onClick={() => setSelectedWord(null)} className="p-2 text-gray-300 hover:bg-gray-100 rounded-full transition-colors"><X size={20} /></button>
+              </div>
+
+              {/* 核心改动：分离标准与慢速读音 */}
+              <div className="flex space-x-3 mb-8">
+                <button 
+                  onClick={() => playTTS(selectedWord.word, 'standard')}
+                  disabled={!!audioLoading}
+                  className="flex-1 flex items-center justify-center space-x-2 py-3 bg-[#FAF7F2] border border-[#F4ECE4] rounded-xl text-[#3D2B1F] active:bg-[#F4ECE4] transition-all hover:border-[#A67B5B]/30"
+                >
+                  {audioLoading === 'standard' ? <Loader2 size={16} className="animate-spin" /> : <Volume2 size={16} className="text-[#A67B5B]" />}
+                  <span className="text-[11px] font-bold">标准读音</span>
+                </button>
+                <button 
+                  onClick={() => playTTS(selectedWord.word, 'slow')}
+                  disabled={!!audioLoading}
+                  className="flex-1 flex items-center justify-center space-x-2 py-3 bg-[#FAF7F2] border border-[#F4ECE4] rounded-xl text-[#3D2B1F] active:bg-[#F4ECE4] transition-all hover:border-[#A67B5B]/30"
+                >
+                  {audioLoading === 'slow' ? <Loader2 size={16} className="animate-spin" /> : <Turtle size={16} className="text-[#A67B5B]" />}
+                  <span className="text-[11px] font-bold">慢速拆解</span>
+                </button>
               </div>
 
               <div className="space-y-4">
@@ -309,31 +289,55 @@ const Reader: React.FC<ReaderProps> = ({ stories, progress, isGenerating, onColl
                   <p className="text-md font-bold text-[#3D2B1F]">{selectedWord.translation}</p>
                 </section>
                 <section>
-                  <h3 className="text-[10px] font-bold uppercase tracking-widest text-[#A67B5B] mb-1">精英语境</h3>
-                  <p className="text-xs text-[#6F4E37] leading-relaxed italic border-l-2 border-[#A67B5B]/20 pl-3">
+                  <h3 className="text-[10px] font-bold uppercase tracking-widest text-[#A67B5B] mb-1">精英语境 (点击朗读)</h3>
+                  <p 
+                    onClick={() => playTTS(selectedWord.example, 'standard')}
+                    className="text-xs text-[#6F4E37] leading-relaxed italic border-l-2 border-[#A67B5B]/20 pl-3 cursor-pointer hover:bg-[#FAF7F2] p-1 rounded transition-colors"
+                  >
                     "{selectedWord.example}"
                   </p>
                 </section>
               </div>
 
               <div className="grid grid-cols-2 gap-3 mt-8">
-                <button 
-                  onClick={() => onCollect(selectedWord.id)}
-                  className={`flex items-center justify-center space-x-2 py-4 rounded-2xl text-xs font-bold transition-all ${progress.collectedWords.includes(selectedWord.id) ? 'bg-[#FAF7F2] text-[#A67B5B]' : 'bg-[#3D2B1F] text-white shadow-lg'}`}
-                >
+                <button onClick={() => onCollect(selectedWord.id)} className={`flex items-center justify-center space-x-2 py-4 rounded-2xl text-xs font-bold transition-all ${progress.collectedWords.includes(selectedWord.id) ? 'bg-[#FAF7F2] text-[#A67B5B]' : 'bg-[#3D2B1F] text-white shadow-lg'}`}>
                   <Star className={`w-3.5 h-3.5 ${progress.collectedWords.includes(selectedWord.id) ? 'fill-[#A67B5B]' : ''}`} />
                   <span>{progress.collectedWords.includes(selectedWord.id) ? '已收藏' : '语料收藏'}</span>
                 </button>
-                <button 
-                  onClick={() => onMaster(selectedWord.id)}
-                  className={`flex items-center justify-center space-x-2 py-4 rounded-2xl text-xs font-bold border transition-all ${progress.masteredWords.includes(selectedWord.id) ? 'bg-[#F4ECE4] border-[#A67B5B]/20 text-[#6F4E37]' : 'bg-white border-[#F4ECE4] text-gray-500'}`}
-                >
+                <button onClick={() => onMaster(selectedWord.id)} className={`flex items-center justify-center space-x-2 py-4 rounded-2xl text-xs font-bold border transition-all ${progress.masteredWords.includes(selectedWord.id) ? 'bg-[#F4ECE4] border-[#A67B5B]/20 text-[#6F4E37]' : 'bg-white border-[#F4ECE4] text-gray-500'}`}>
                   <CheckCircle className={`w-3.5 h-3.5 ${progress.masteredWords.includes(selectedWord.id) ? 'fill-[#A67B5B]' : ''}`} />
                   <span>{progress.masteredWords.includes(selectedWord.id) ? '已掌握' : '标记掌握'}</span>
                 </button>
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {showChapters && (
+        <div className="fixed inset-0 z-[100] flex animate-in fade-in">
+           <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setShowChapters(false)} />
+           <div className="relative w-4/5 max-w-xs bg-white h-full shadow-2xl animate-in slide-in-from-left duration-300 flex flex-col">
+              <div className="p-6 border-b border-[#F4ECE4]">
+                 <div className="flex justify-between items-center mb-2">
+                    <h3 className="serif-font text-lg font-bold text-[#3D2B1F]">本系列章节</h3>
+                    <button onClick={() => setShowChapters(false)}><X size={20} className="text-gray-300" /></button>
+                 </div>
+                 <p className="text-[10px] text-[#A67B5B] font-bold uppercase tracking-widest">Series Chapters</p>
+              </div>
+              <div className="flex-grow overflow-y-auto p-4 space-y-2">
+                 {seriesChapters.map((ch, idx) => (
+                    <button 
+                      key={ch.id}
+                      onClick={() => { navigate(`/reader/${ch.id}`); setShowChapters(false); }}
+                      className={`w-full text-left p-4 rounded-2xl transition-all border ${ch.id === story.id ? 'bg-[#3D2B1F] text-white border-[#3D2B1F] shadow-lg' : 'bg-[#FAF7F2] border-[#F4ECE4] text-[#3D2B1F]'}`}
+                    >
+                       <p className="text-[9px] font-black uppercase tracking-wider opacity-60 mb-1">Chapter {idx + 1}</p>
+                       <p className="text-xs font-bold line-clamp-1">{ch.title}</p>
+                    </button>
+                 ))}
+              </div>
+           </div>
         </div>
       )}
     </div>
