@@ -14,13 +14,7 @@ export class GeminiService {
     return `https://picsum.photos/seed/${seed}/800/600`;
   }
 
-  /**
-   * 基于后端精准词库生成剧情
-   * @param theme 剧情主题
-   * @param bankWords 从后端词库中筛选出的备选词汇
-   */
   async generateStoryFromBank(theme: string, bankWords: VocabularyBankEntry[]): Promise<any> {
-    // 将词库转换为 AI 可理解的简要上下文
     const vocabularyContext = bankWords.map(w => 
       `${w.word} (${w.translation}): ${w.definition}`
     ).join('\n');
@@ -53,6 +47,14 @@ export class GeminiService {
       if (data.coverImage === "RANDOM_PLACEHOLDER") {
         data.coverImage = this.getRandomCoverUrl(theme);
       }
+      // 补充缺失的元数据，确保符合 Story 类型定义
+      if (data.vocabulary) {
+        data.vocabulary = data.vocabulary.map((v: any) => ({
+          ...v,
+          tags: v.tags || ["AI-Generated"],
+          lastUpdated: new Date().toISOString()
+        }));
+      }
       return data;
     } catch (e) {
       console.error("Story Gen Error", e);
@@ -61,7 +63,6 @@ export class GeminiService {
   }
 
   async generateStory(theme: string): Promise<any> {
-    // 兼容旧版或无词库状态
     return this.generateStoryFromBank(theme, []);
   }
 
@@ -74,9 +75,21 @@ export class GeminiService {
         responseSchema: this.getStorySchema()
       }
     });
-    const data = JSON.parse(response.text || '{}');
-    data.coverImage = this.getRandomCoverUrl(previousStory.genre);
-    return data;
+    try {
+      const data = JSON.parse(response.text || '{}');
+      data.coverImage = this.getRandomCoverUrl(previousStory.genre);
+      if (data.vocabulary) {
+        data.vocabulary = data.vocabulary.map((v: any) => ({
+          ...v,
+          tags: v.tags || ["AI-Extension"],
+          lastUpdated: new Date().toISOString()
+        }));
+      }
+      return data;
+    } catch (e) {
+      console.error("Extension Error", e);
+      throw e;
+    }
   }
 
   private getStorySchema() {
@@ -111,7 +124,9 @@ export class GeminiService {
               definition: { type: Type.STRING },
               example: { type: Type.STRING },
               translation: { type: Type.STRING },
-              level: { type: Type.STRING, enum: ["Band7", "Band8", "Band9"] }
+              level: { type: Type.STRING, enum: ["Band7", "Band8", "Band9"] },
+              tags: { type: Type.ARRAY, items: { type: Type.STRING } },
+              lastUpdated: { type: Type.STRING }
             },
             required: ["id", "word", "phonetic", "definition", "example", "translation", "level"]
           }

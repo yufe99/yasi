@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { HashRouter, Routes, Route, Link, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import { INITIAL_STORIES } from './constants';
 import { Story, UserProgress, UserRole, ActivationCode, VocabularyBankEntry } from './types';
@@ -9,7 +9,75 @@ import Auth from './components/Auth';
 import AdminDashboard from './components/AdminDashboard';
 import LearningPlan from './components/LearningPlan';
 import { geminiService } from './services/geminiService';
-import { Book, Library, Layout, User as UserIcon, Home as HomeIcon, Star, ShieldCheck, PlusSquare, Sparkles, X, Loader2, ArrowRight, LogOut, ImageOff, Trash2, Layers, Database } from 'lucide-react';
+import { Library, Layout, User as UserIcon, Home as HomeIcon, ShieldCheck, PlusSquare, Sparkles, X, Loader2, ArrowRight, LogOut, Database } from 'lucide-react';
+
+// --- 子组件定义（移动到主组件之前，确保可访问） ---
+
+const Home: React.FC<{ stories: Story[]; progress: UserProgress; onTriggerGen: () => void; onDeleteStory: (id: string) => void; }> = ({ stories, progress, onTriggerGen }) => {
+  const navigate = useNavigate();
+  const rootStories = stories.filter(s => !s.prevId);
+  return (
+    <div className="space-y-8 animate-in fade-in duration-500 pb-12">
+      <div className="bg-[#3D2B1F] rounded-[2.5rem] p-8 text-white relative overflow-hidden shadow-2xl border border-[#A67B5B]/20">
+        <div className="relative z-10">
+          <p className="text-[10px] font-bold text-[#A67B5B] uppercase tracking-widest mb-2">后端语料已同步</p>
+          <h2 className="serif-font text-3xl font-bold mb-6">已吞噬词汇：<span className="text-[#A67B5B]">{progress.masteredWords.length}</span></h2>
+          <button onClick={onTriggerGen} className="bg-[#A67B5B] text-white px-6 py-3 rounded-2xl font-bold text-sm flex items-center space-x-2 shadow-lg"><PlusSquare size={18} /><span>开启定制</span></button>
+        </div>
+        <Sparkles className="absolute -right-6 -bottom-6 text-white/5" size={160} />
+      </div>
+      <div className="space-y-6">
+        <h3 className="serif-font text-xl font-bold text-[#3D2B1F]">官方/私人藏书</h3>
+        <div className="space-y-6">
+          {rootStories.map(story => (
+             <div key={story.id} onClick={() => navigate(`/reader/${story.id}`)} className="bg-white rounded-[2rem] overflow-hidden border border-[#F4ECE4] shadow-sm flex flex-col active:scale-[0.98]">
+                <div className="relative h-40 bg-[#FAF7F2]">
+                   <img src={story.coverImage} className="w-full h-full object-cover" alt={story.title} />
+                   <div className="absolute inset-0 bg-gradient-to-t from-[#3D2B1F]/80 to-transparent" />
+                   <div className="absolute bottom-4 left-6">
+                      <span className="text-[8px] font-black bg-[#A67B5B] text-white px-2 py-0.5 rounded uppercase">{story.genre}</span>
+                      <h4 className="serif-font text-lg font-bold text-white mt-1">{story.title}</h4>
+                   </div>
+                </div>
+                <div className="p-4 flex justify-between items-center">
+                   <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Episode 1</span>
+                   <div className="flex items-center text-[#A67B5B] font-bold text-[9px] uppercase">
+                      <span>开启修行</span><ArrowRight size={14} className="ml-1" />
+                   </div>
+                </div>
+             </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const Profile: React.FC<{ role: UserRole; progress: UserProgress; onLogout: () => void; onActivate: (code: string) => boolean }> = ({ role, progress, onLogout }) => {
+  const navigate = useNavigate();
+  return (
+    <div className="space-y-8 animate-in slide-in-from-right-4 duration-500 pb-12">
+      <div className="flex flex-col items-center py-8">
+        <div className="w-20 h-20 bg-[#F4ECE4] rounded-full flex items-center justify-center mb-4 border-4 border-white shadow-xl">
+          <UserIcon size={32} className="text-[#A67B5B]" />
+        </div>
+        <h2 className="serif-font text-xl font-bold text-[#3D2B1F]">雅思修士</h2>
+      </div>
+      <div className="space-y-3">
+        {role === UserRole.ADMIN && (
+          <button onClick={() => navigate('/admin')} className="w-full bg-[#FAF7F2] border border-[#F4ECE4] text-[#6F4E37] py-4 rounded-2xl font-bold text-xs flex items-center justify-center space-x-2">
+            <ShieldCheck size={18} /> <span>管理系统后台</span>
+          </button>
+        )}
+        <button onClick={onLogout} className="w-full bg-white border border-[#F4ECE4] text-red-500 py-4 rounded-2xl font-bold text-xs flex items-center justify-center space-x-2">
+          <LogOut size={16} /> <span>退出登录</span>
+        </button>
+      </div>
+    </div>
+  );
+};
+
+// --- 主内容组件 ---
 
 const AppContent: React.FC = () => {
   const [role, setRole] = useState<UserRole>(() => (localStorage.getItem('user_role') as UserRole) || UserRole.GUEST);
@@ -18,7 +86,6 @@ const AppContent: React.FC = () => {
     return saved ? JSON.parse(saved) : INITIAL_STORIES;
   });
   
-  // 模拟后端的“雅思精准词库”
   const [vocabularyBank, setVocabularyBank] = useState<VocabularyBankEntry[]>(() => {
     const saved = localStorage.getItem('vocabulary_bank');
     return saved ? JSON.parse(saved) : [
@@ -71,7 +138,6 @@ const AppContent: React.FC = () => {
     if (!userOutline || isGenerating) return;
     setIsGenerating(true);
     try {
-      // 这里的逻辑也更新为：从后端词库随机抽选词给用户生成的剧本
       const shuffled = [...vocabularyBank].sort(() => 0.5 - Math.random()).slice(0, 8);
       const newStoryData = await geminiService.generateStoryFromBank(userOutline, shuffled);
       const newStory: Story = { ...newStoryData, id: 'user-' + Date.now(), dateAdded: new Date().toISOString(), isUserGenerated: true };
@@ -149,72 +215,6 @@ const AppContent: React.FC = () => {
           </div>
         </div>
       )}
-    </div>
-  );
-};
-
-// ... (Rest of App component with HashRouter)
-const Home: React.FC<{ stories: Story[]; progress: UserProgress; onTriggerGen: () => void; onDeleteStory: (id: string) => void; }> = ({ stories, progress, onTriggerGen, onDeleteStory }) => {
-  const navigate = useNavigate();
-  const rootStories = stories.filter(s => !s.prevId);
-  return (
-    <div className="space-y-8 animate-in fade-in duration-500 pb-12">
-      <div className="bg-[#3D2B1F] rounded-[2.5rem] p-8 text-white relative overflow-hidden shadow-2xl border border-[#A67B5B]/20">
-        <div className="relative z-10">
-          <p className="text-[10px] font-bold text-[#A67B5B] uppercase tracking-widest mb-2">后端语料已同步</p>
-          <h2 className="serif-font text-3xl font-bold mb-6">已吞噬词汇：<span className="text-[#A67B5B]">{progress.masteredWords.length}</span></h2>
-          <button onClick={onTriggerGen} className="bg-[#A67B5B] text-white px-6 py-3 rounded-2xl font-bold text-sm flex items-center space-x-2 shadow-lg"><PlusSquare size={18} /><span>开启定制</span></button>
-        </div>
-        <Sparkles className="absolute -right-6 -bottom-6 text-white/5" size={160} />
-      </div>
-      <div className="space-y-6">
-        <h3 className="serif-font text-xl font-bold text-[#3D2B1F]">官方/私人藏书</h3>
-        <div className="space-y-6">
-          {rootStories.map(story => (
-             <div key={story.id} onClick={() => navigate(`/reader/${story.id}`)} className="bg-white rounded-[2rem] overflow-hidden border border-[#F4ECE4] shadow-sm flex flex-col active:scale-[0.98]">
-                <div className="relative h-40 bg-[#FAF7F2]">
-                   <img src={story.coverImage} className="w-full h-full object-cover" />
-                   <div className="absolute inset-0 bg-gradient-to-t from-[#3D2B1F]/80 to-transparent" />
-                   <div className="absolute bottom-4 left-6">
-                      <span className="text-[8px] font-black bg-[#A67B5B] text-white px-2 py-0.5 rounded uppercase">{story.genre}</span>
-                      <h4 className="serif-font text-lg font-bold text-white mt-1">{story.title}</h4>
-                   </div>
-                </div>
-                <div className="p-4 flex justify-between items-center">
-                   <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Episode 1</span>
-                   <div className="flex items-center text-[#A67B5B] font-bold text-[9px] uppercase">
-                      <span>开启修行</span><ArrowRight size={14} className="ml-1" />
-                   </div>
-                </div>
-             </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const Profile: React.FC<{ role: UserRole; progress: UserProgress; onLogout: () => void; onActivate: (code: string) => boolean }> = ({ role, progress, onLogout, onActivate }) => {
-  const [code, setCode] = useState('');
-  const navigate = useNavigate();
-  return (
-    <div className="space-y-8 animate-in slide-in-from-right-4 duration-500 pb-12">
-      <div className="flex flex-col items-center py-8">
-        <div className="w-20 h-20 bg-[#F4ECE4] rounded-full flex items-center justify-center mb-4 border-4 border-white shadow-xl">
-          <UserIcon size={32} className="text-[#A67B5B]" />
-        </div>
-        <h2 className="serif-font text-xl font-bold text-[#3D2B1F]">雅思修士</h2>
-      </div>
-      <div className="space-y-3">
-        {role === UserRole.ADMIN && (
-          <button onClick={() => navigate('/admin')} className="w-full bg-[#FAF7F2] border border-[#F4ECE4] text-[#6F4E37] py-4 rounded-2xl font-bold text-xs flex items-center justify-center space-x-2">
-            <ShieldCheck size={18} /> <span>管理系统后台</span>
-          </button>
-        )}
-        <button onClick={onLogout} className="w-full bg-white border border-[#F4ECE4] text-red-500 py-4 rounded-2xl font-bold text-xs flex items-center justify-center space-x-2">
-          <LogOut size={16} /> <span>退出登录</span>
-        </button>
-      </div>
     </div>
   );
 };
