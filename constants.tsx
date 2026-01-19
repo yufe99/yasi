@@ -29,7 +29,10 @@ export const INITIAL_STORIES: Story[] = [
         example: 'He felt a sick feeling of apprehension as he stepped into the office.',
         translation: '忧虑，恐惧',
         // Fix: Added missing 'level' property to satisfy VocabularyWord interface
-        level: 'Band8'
+        level: 'Band8',
+        // Fix: Added missing 'tags' and 'lastUpdated' properties to satisfy VocabularyWord interface
+        tags: ['Core', 'Finance'],
+        lastUpdated: '2024-01-01T00:00:00Z'
       },
       {
         id: 'w2',
@@ -39,7 +42,10 @@ export const INITIAL_STORIES: Story[] = [
         example: 'The managing director works closely with his junior associates.',
         translation: '同事，合伙人',
         // Fix: Added missing 'level' property to satisfy VocabularyWord interface
-        level: 'Band7'
+        level: 'Band7',
+        // Fix: Added missing 'tags' and 'lastUpdated' properties to satisfy VocabularyWord interface
+        tags: ['Business'],
+        lastUpdated: '2024-01-01T00:00:00Z'
       },
       {
         id: 'w3',
@@ -49,7 +55,10 @@ export const INITIAL_STORIES: Story[] = [
         example: 'In the world of high finance, you have to be ruthless to succeed.',
         translation: '无情的，冷酷的',
         // Fix: Added missing 'level' property to satisfy VocabularyWord interface
-        level: 'Band8'
+        level: 'Band8',
+        // Fix: Added missing 'tags' and 'lastUpdated' properties to satisfy VocabularyWord interface
+        tags: ['Personality', 'Finance'],
+        lastUpdated: '2024-01-01T00:00:00Z'
       }
     ]
   },
@@ -82,7 +91,10 @@ export const INITIAL_STORIES: Story[] = [
         example: 'The palace was decorated in an opulent style with gold leaf and velvet.',
         translation: '豪华的，富裕的',
         // Fix: Added missing 'level' property to satisfy VocabularyWord interface
-        level: 'Band9'
+        level: 'Band9',
+        // Fix: Added missing 'tags' and 'lastUpdated' properties to satisfy VocabularyWord interface
+        tags: ['Lifestyle'],
+        lastUpdated: '2024-01-01T00:00:00Z'
       },
       {
         id: 'w5',
@@ -92,7 +104,10 @@ export const INITIAL_STORIES: Story[] = [
         example: 'Despite her success, she remained modest about her achievements.',
         translation: '谦虚的，朴素的',
         // Fix: Added missing 'level' property to satisfy VocabularyWord interface
-        level: 'Band7'
+        level: 'Band7',
+        // Fix: Added missing 'tags' and 'lastUpdated' properties to satisfy VocabularyWord interface
+        tags: ['Personality'],
+        lastUpdated: '2024-01-01T00:00:00Z'
       },
       {
         id: 'w6',
@@ -102,7 +117,10 @@ export const INITIAL_STORIES: Story[] = [
         example: 'The family claimed an aristocratic lineage dating back centuries.',
         translation: '贵族的，排外的',
         // Fix: Added missing 'level' property to satisfy VocabularyWord interface
-        level: 'Band9'
+        level: 'Band9',
+        // Fix: Added missing 'tags' and 'lastUpdated' properties to satisfy VocabularyWord interface
+        tags: ['Social Status'],
+        lastUpdated: '2024-01-01T00:00:00Z'
       },
       {
         id: 'w7',
@@ -112,7 +130,10 @@ export const INITIAL_STORIES: Story[] = [
         example: 'Customers were warned to scrutinize the small print of the contract.',
         translation: '详细检查，细读',
         // Fix: Added missing 'level' property to satisfy VocabularyWord interface
-        level: 'Band8'
+        level: 'Band8',
+        // Fix: Added missing 'tags' and 'lastUpdated' properties to satisfy VocabularyWord interface
+        tags: ['Action'],
+        lastUpdated: '2024-01-01T00:00:00Z'
       }
     ]
   }

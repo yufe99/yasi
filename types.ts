@@ -12,15 +12,20 @@ export enum UserRole {
 
 export type MembershipType = 'monthly' | 'annual';
 
-export interface VocabularyWord {
+// 后端管理的标准词库条目
+export interface VocabularyBankEntry {
   id: string;
   word: string;
   phonetic: string;
+  translation: string;
   definition: string;
   example: string;
-  translation: string;
-  level: 'Band6' | 'Band7' | 'Band8' | 'Band9';
+  level: 'Band7' | 'Band8' | 'Band9';
+  tags: string[]; // 如 "2024更新", "职场", "听力高频"
+  lastUpdated: string;
 }
+
+export interface VocabularyWord extends VocabularyBankEntry {}
 
 export interface StoryContentPart {
   type: 'text' | 'word';
@@ -41,6 +46,7 @@ export interface Story {
   isUserGenerated?: boolean;
   prevId?: string;
   nextId?: string;
+  attachments?: string[]; // 资料下载链接
 }
 
 export interface UserProgress {
