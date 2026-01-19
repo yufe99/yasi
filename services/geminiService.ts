@@ -1,12 +1,10 @@
-
 import { GoogleGenAI, Type } from "@google/genai";
 import { Story, VocabularyBankEntry } from "../types";
 
 export class GeminiService {
-  private ai: GoogleGenAI;
-
-  constructor() {
-    this.ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  private getAI() {
+    // 每次调用时获取，确保能拿到最新的环境变量（针对某些热更新场景）
+    return new GoogleGenAI({ apiKey: process.env.API_KEY });
   }
 
   private getRandomCoverUrl(keywords: string) {
@@ -19,21 +17,20 @@ export class GeminiService {
       `${w.word} (${w.translation}): ${w.definition}`
     ).join('\n');
 
-    const prompt = `你是一名顶级雅思名师。
-    当前任务：为高认知女性编写【${theme}】题材的雅思爽文。
+    const prompt = `你是一名顶级雅思名师，擅长创作针对 25-35 岁高认知女性的都市/职场题材爽文。
+    当前任务：编写【${theme}】题材的雅思剧情。
     
     必须使用的精准词库（请从中挑选 5-8 个核心词嵌入剧情）：
     ${vocabularyContext}
 
     要求：
-    1. 标题（title）：极具吸引力的中文爽文标题。
-    2. 沉浸读内容（immersionContent）：全中文剧情，节奏极快，反转强烈。将挑选的单词以英文形式自然嵌入。
-    3. 词汇表（vocabulary）：必须包含你挑选的单词，且信息与提供的词库保持一致。
-    4. 封面图：返回 "RANDOM_PLACEHOLDER"。
+    1. 标题（title）：吸引人的中文爽文标题。
+    2. 沉浸读内容（immersionContent）：全中文剧情，节奏极快，反转强烈。将挑选的英文单词自然嵌入，不要生硬。
+    3. 词汇表（vocabulary）：必须包含你挑选的单词，信息与词库一致。
+    4. 输出格式：纯 JSON 格式。`;
 
-    输出格式：JSON。`;
-
-    const response = await this.ai.models.generateContent({
+    const ai = this.getAI();
+    const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: prompt,
       config: {
@@ -44,10 +41,9 @@ export class GeminiService {
 
     try {
       const data = JSON.parse(response.text || '{}');
-      if (data.coverImage === "RANDOM_PLACEHOLDER") {
+      if (!data.coverImage || data.coverImage === "RANDOM_PLACEHOLDER") {
         data.coverImage = this.getRandomCoverUrl(theme);
       }
-      // 补充缺失的元数据，确保符合 Story 类型定义
       if (data.vocabulary) {
         data.vocabulary = data.vocabulary.map((v: any) => ({
           ...v,
@@ -57,25 +53,42 @@ export class GeminiService {
       }
       return data;
     } catch (e) {
-      console.error("Story Gen Error", e);
+      console.error("Story Gen Error:", e);
       throw e;
     }
   }
 
-  async generateStory(theme: string): Promise<any> {
-    return this.generateStoryFromBank(theme, []);
-  }
-
   async extendStory(previousStory: Story): Promise<any> {
-    const response = await this.ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: `为续作《${previousStory.title}》创作下一集。续写剧情。`,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: this.getStorySchema()
-      }
-    });
+    // 获取前文文本作为上下文
+    const prevContent = previousStory.immersionContent
+      .map(p => p.content)
+      .join('');
+
+    const prompt = `你正在续写一部名为《${previousStory.title}》的雅思爽文。
+    
+    前情提要：
+    "${prevContent}"
+    
+    任务：创作下一章。
+    要求：
+    1. 保持人设和风格的一致性。
+    2. 引入 5 个左右新的高级雅思词汇（Band 7-9）。
+    3. 剧情要有新的张力和反转。
+    4. 封面图：返回 "RANDOM_PLACEHOLDER"。
+    
+    输出格式：JSON。`;
+
+    const ai = this.getAI();
     try {
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: this.getStorySchema()
+        }
+      });
+
       const data = JSON.parse(response.text || '{}');
       data.coverImage = this.getRandomCoverUrl(previousStory.genre);
       if (data.vocabulary) {
@@ -87,7 +100,7 @@ export class GeminiService {
       }
       return data;
     } catch (e) {
-      console.error("Extension Error", e);
+      console.error("Extension AI Error:", e);
       throw e;
     }
   }

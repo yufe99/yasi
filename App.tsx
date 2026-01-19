@@ -11,7 +11,7 @@ import LearningPlan from './components/LearningPlan';
 import { geminiService } from './services/geminiService';
 import { Library, Layout, User as UserIcon, Home as HomeIcon, ShieldCheck, PlusSquare, Sparkles, X, Loader2, ArrowRight, LogOut, Database } from 'lucide-react';
 
-// --- 子组件定义（移动到主组件之前，确保可访问） ---
+// --- 子组件定义 ---
 
 const Home: React.FC<{ stories: Story[]; progress: UserProgress; onTriggerGen: () => void; onDeleteStory: (id: string) => void; }> = ({ stories, progress, onTriggerGen }) => {
   const navigate = useNavigate();
@@ -53,7 +53,7 @@ const Home: React.FC<{ stories: Story[]; progress: UserProgress; onTriggerGen: (
   );
 };
 
-const Profile: React.FC<{ role: UserRole; progress: UserProgress; onLogout: () => void; onActivate: (code: string) => boolean }> = ({ role, progress, onLogout }) => {
+const Profile: React.FC<{ role: UserRole; progress: UserProgress; onLogout: () => void; onActivate: (code: string) => boolean }> = ({ role, progress, onLogout, onActivate }) => {
   const navigate = useNavigate();
   return (
     <div className="space-y-8 animate-in slide-in-from-right-4 duration-500 pb-12">
@@ -69,6 +69,7 @@ const Profile: React.FC<{ role: UserRole; progress: UserProgress; onLogout: () =
             <ShieldCheck size={18} /> <span>管理系统后台</span>
           </button>
         )}
+        {/* Fix: Changed handleLogout to onLogout to correctly call the prop passed from parent */}
         <button onClick={onLogout} className="w-full bg-white border border-[#F4ECE4] text-red-500 py-4 rounded-2xl font-bold text-xs flex items-center justify-center space-x-2">
           <LogOut size={16} /> <span>退出登录</span>
         </button>
@@ -125,10 +126,19 @@ const AppContent: React.FC = () => {
       const extensionData = await geminiService.extendStory(prevStory);
       const newId = 'user-ext-' + Date.now();
       const newStory: Story = { ...extensionData, id: newId, dateAdded: new Date().toISOString(), isUserGenerated: true, prevId: prevStory.id };
-      setStories(prev => prev.map(s => s.id === prevStory.id ? { ...s, nextId: newId } : s).concat(newStory));
+      setStories(prev => {
+        const updated = prev.map(s => s.id === prevStory.id ? { ...s, nextId: newId } : s);
+        return [...updated, newStory];
+      });
       navigate(`/reader/${newId}`);
-    } catch (e) {
-      alert('续写失败');
+    } catch (e: any) {
+      console.error(e);
+      const msg = e.message || "";
+      if (msg.includes("API key")) {
+        alert('续写失败：未检测到有效的 API Key，请联系管理员或检查 Vercel 环境变量配置。');
+      } else {
+        alert('续写失败：AI 构思中断，可能是由于剧情过于超纲或网络波动。请重试。');
+      }
     } finally {
       setIsGenerating(false);
     }
@@ -146,7 +156,7 @@ const AppContent: React.FC = () => {
       setUserOutline('');
       navigate(`/reader/${newStory.id}`);
     } catch (e) {
-      alert('构思中断');
+      alert('构思中断，请检查 API Key 配置或网络状态。');
     } finally {
       setIsGenerating(false);
     }
