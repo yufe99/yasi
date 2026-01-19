@@ -1,15 +1,54 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI, Type, Modality } from "@google/genai";
 import { Story, VocabularyBankEntry } from "../types";
 
 export class GeminiService {
   private getAI() {
-    // 每次调用时获取，确保能拿到最新的环境变量（针对某些热更新场景）
-    return new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const config: any = { apiKey: process.env.API_KEY };
+    
+    // 关键修复：确保语音功能也使用代理
+    if (process.env.API_BASE_URL) {
+      config.baseUrl = process.env.API_BASE_URL;
+    }
+    
+    return new GoogleGenAI(config);
   }
 
   private getRandomCoverUrl(keywords: string) {
     const seed = Math.floor(Math.random() * 1000);
     return `https://picsum.photos/seed/${seed}/800/600`;
+  }
+
+  async generateTTS(text: string, type: 'standard' | 'slow' | 'full' = 'standard'): Promise<string | undefined> {
+    const ai = this.getAI();
+    let prompt = "";
+    
+    if (type === 'full') {
+      prompt = `Read the following story slowly and clearly for an IELTS learner. Maintain a sophisticated and professional tone: ${text}`;
+    } else if (type === 'slow') {
+      // 增强提示词，强制模型产生更慢的节奏
+      prompt = `Pronounce this word VERY SLOWLY, clearly enunciating every single syllable. BREAK IT DOWN for a learner: ${text}`;
+    } else {
+      prompt = `Pronounce this word clearly at a standard professional speed: ${text}`;
+    }
+
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash-preview-tts",
+        contents: [{ parts: [{ text: prompt }] }],
+        config: {
+          responseModalities: [Modality.AUDIO],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName: 'Kore' }
+            }
+          }
+        }
+      });
+      return response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    } catch (e) {
+      console.error("Gemini TTS Error:", e);
+      return undefined;
+    }
   }
 
   async generateStoryFromBank(theme: string, bankWords: VocabularyBankEntry[]): Promise<any> {
@@ -30,16 +69,16 @@ export class GeminiService {
     4. 输出格式：纯 JSON 格式。`;
 
     const ai = this.getAI();
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: this.getStorySchema()
-      }
-    });
-
     try {
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: this.getStorySchema()
+        }
+      });
+
       const data = JSON.parse(response.text || '{}');
       if (!data.coverImage || data.coverImage === "RANDOM_PLACEHOLDER") {
         data.coverImage = this.getRandomCoverUrl(theme);
@@ -59,14 +98,13 @@ export class GeminiService {
   }
 
   async extendStory(previousStory: Story): Promise<any> {
-    // 获取前文文本作为上下文
     const prevContent = previousStory.immersionContent
       .map(p => p.content)
       .join('');
 
     const prompt = `你正在续写一部名为《${previousStory.title}》的雅思爽文。
     
-    前情提要：
+    前情提提要：
     "${prevContent}"
     
     任务：创作下一章。

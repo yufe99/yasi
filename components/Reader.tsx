@@ -1,8 +1,7 @@
-
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Story, VocabularyWord, UserProgress } from '../types';
-import { GoogleGenAI, Modality } from "@google/genai";
+import { geminiService } from '../services/geminiService';
 import { 
   ArrowLeft, 
   Volume2, 
@@ -114,31 +113,9 @@ const Reader: React.FC<ReaderProps> = ({ stories, progress, isGenerating, onColl
         audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
       }
 
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      
-      let prompt = "";
-      if (type === 'full') {
-        prompt = `Read the following story slowly and clearly for an IELTS learner. Maintain a sophisticated and professional tone: ${text}`;
-      } else if (type === 'slow') {
-        prompt = `Pronounce this word extremely slowly, breaking down each syllable clearly for a language learner: ${text}`;
-      } else {
-        prompt = `Pronounce this word clearly at a standard professional speed: ${text}`;
-      }
+      // 关键修复：统一使用 geminiService，确保代理 (baseUrl) 有效
+      const base64Audio = await geminiService.generateTTS(text, type);
 
-      const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash-preview-tts",
-        contents: [{ parts: [{ text: prompt }] }],
-        config: {
-          responseModalities: [Modality.AUDIO],
-          speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: { voiceName: 'Kore' }
-            }
-          }
-        }
-      });
-
-      const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
       if (base64Audio) {
         const audioBuffer = await decodeAudioData(decodeBase64(base64Audio), audioContextRef.current);
         stopAudio();
@@ -154,14 +131,16 @@ const Reader: React.FC<ReaderProps> = ({ stories, progress, isGenerating, onColl
         source.start(0);
         sourceNodeRef.current = source;
         if (type === 'full') setIsPlayingFull(true);
+      } else {
+        throw new Error("No audio data returned");
       }
     } catch (error) {
-      console.error("TTS Error:", error);
+      console.error("TTS Fallback Activated:", error);
       const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = type === 'slow' ? 0.5 : 0.85; 
+      utterance.rate = type === 'slow' ? 0.4 : 0.85; 
       utterance.lang = 'en-GB';
+      utterance.onend = () => setAudioLoading(null);
       window.speechSynthesis.speak(utterance);
-      setAudioLoading(null);
     }
   };
 
@@ -263,7 +242,6 @@ const Reader: React.FC<ReaderProps> = ({ stories, progress, isGenerating, onColl
                 <button onClick={() => setSelectedWord(null)} className="p-2 text-gray-300 hover:bg-gray-100 rounded-full transition-colors"><X size={20} /></button>
               </div>
 
-              {/* 核心改动：分离标准与慢速读音 */}
               <div className="flex space-x-3 mb-8">
                 <button 
                   onClick={() => playTTS(selectedWord.word, 'standard')}
