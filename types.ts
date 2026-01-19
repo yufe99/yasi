@@ -1,4 +1,3 @@
-
 export enum ReadingMode {
   IMMERSION = 'IMMERSION',
   BLIND = 'BLIND',
@@ -21,7 +20,7 @@ export interface VocabularyBankEntry {
   definition: string;
   example: string;
   level: 'Band7' | 'Band8' | 'Band9';
-  tags: string[]; // 如 "2024更新", "职场", "听力高频"
+  tags: string[]; 
   lastUpdated: string;
 }
 
@@ -46,7 +45,7 @@ export interface Story {
   isUserGenerated?: boolean;
   prevId?: string;
   nextId?: string;
-  attachments?: string[]; // 资料下载链接
+  attachments?: string[]; 
 }
 
 export interface UserProgress {
@@ -57,6 +56,7 @@ export interface UserProgress {
   isVip: boolean;
   membershipType?: MembershipType;
   freeStoriesRead: number;
+  freeTrialQuota: number; // 新增：剩余试用额度
 }
 
 export interface ActivationCode {

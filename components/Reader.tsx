@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Story, VocabularyWord, UserProgress } from '../types';
+import { Story, VocabularyWord, UserProgress, UserRole } from '../types';
 import { geminiService } from '../services/geminiService';
 import { 
   ArrowLeft, 
@@ -23,7 +23,10 @@ import {
   Turtle,
   Share2,
   Copy,
-  Check
+  Check,
+  ShieldAlert,
+  UserCheck,
+  Crown
 } from 'lucide-react';
 
 // --- Audio & Serialization Helpers ---
@@ -49,6 +52,7 @@ async function decodeAudioData(data: Uint8Array, ctx: AudioContext): Promise<Aud
 interface ReaderProps {
   stories: Story[];
   progress: UserProgress;
+  userRole: UserRole;
   isGenerating?: boolean;
   onCollect: (wordId: string) => void;
   onMaster: (wordId: string) => void;
@@ -56,7 +60,7 @@ interface ReaderProps {
   onStoryRead: (id: string) => void;
 }
 
-const Reader: React.FC<ReaderProps> = ({ stories, progress, isGenerating, onCollect, onMaster, onExtend, onStoryRead }) => {
+const Reader: React.FC<ReaderProps> = ({ stories, progress, userRole, isGenerating, onCollect, onMaster, onExtend, onStoryRead }) => {
   const { storyId } = useParams();
   const navigate = useNavigate();
   const [selectedWord, setSelectedWord] = useState<VocabularyWord | null>(null);
@@ -71,6 +75,14 @@ const Reader: React.FC<ReaderProps> = ({ stories, progress, isGenerating, onColl
 
   const story = useMemo(() => stories.find(s => s.id === storyId), [stories, storyId]);
   
+  // 试用锁定检查：如果是新章节，且不是 VIP，且灵石已耗尽
+  const isLocked = useMemo(() => {
+    if (!story) return false;
+    if (progress.isVip || userRole === UserRole.ADMIN) return false;
+    const isAlreadyRead = progress.completedStories.includes(story.id);
+    return !isAlreadyRead && progress.freeTrialQuota <= 0;
+  }, [story, progress, userRole]);
+
   const seriesChapters = useMemo(() => {
     if (!story) return [];
     let root = story;
@@ -91,12 +103,12 @@ const Reader: React.FC<ReaderProps> = ({ stories, progress, isGenerating, onColl
   }, [stories, story]);
 
   useEffect(() => {
-    if (story && !progress.isVip && !progress.completedStories.includes(story.id)) {
+    if (story && !isLocked) {
       onStoryRead(story.id);
     }
     window.scrollTo(0, 0);
     return () => stopAudio();
-  }, [storyId]);
+  }, [storyId, isLocked]);
 
   const stopAudio = () => {
     if (sourceNodeRef.current) {
@@ -107,6 +119,7 @@ const Reader: React.FC<ReaderProps> = ({ stories, progress, isGenerating, onColl
   };
 
   const playTTS = async (text: string, type: 'standard' | 'slow' | 'full' = 'standard') => {
+    if (isLocked) return;
     if (isPlayingFull && type === 'full') {
       stopAudio();
       return;
@@ -142,9 +155,13 @@ const Reader: React.FC<ReaderProps> = ({ stories, progress, isGenerating, onColl
 
   const generateShareKey = () => {
     if (!story) return '';
-    // 仅打包核心剧情数据以控制长度
+    const users = JSON.parse(localStorage.getItem('lexitale_users') || '[]');
+    const currentUser = users[0]?.nickname || '无名修士';
+
     const payload = {
-      type: 'STORY_KEY',
+      type: 'SECURE_STORY_KEY',
+      origin: currentUser,
+      isOfficial: !story.isUserGenerated,
       data: {
         title: story.title,
         tagline: story.tagline,
@@ -153,7 +170,9 @@ const Reader: React.FC<ReaderProps> = ({ stories, progress, isGenerating, onColl
         blindContent: story.blindContent,
         vocabulary: story.vocabulary,
         coverImage: story.coverImage
-      }
+      },
+      timestamp: Date.now(),
+      securityLevel: 'MEMBER_ONLY'
     };
     const jsonStr = JSON.stringify(payload);
     return btoa(unescape(encodeURIComponent(jsonStr)));
@@ -169,7 +188,32 @@ const Reader: React.FC<ReaderProps> = ({ stories, progress, isGenerating, onColl
   if (!story) return null;
 
   return (
-    <div className="animate-in fade-in duration-500 pb-24">
+    <div className="animate-in fade-in duration-500 pb-24 relative">
+      {/* Paywall Layer */}
+      {isLocked && (
+        <div className="fixed inset-0 z-[80] bg-[#FDFBF9]/40 backdrop-blur-xl flex items-center justify-center p-8 animate-in fade-in duration-700">
+           <div className="w-full max-w-sm bg-white rounded-[2.5rem] p-10 shadow-2xl border border-[#F4ECE4] text-center relative overflow-hidden">
+              <div className="relative z-10">
+                 <div className="inline-flex p-4 rounded-full bg-amber-50 mb-6">
+                    <Crown size={32} className="text-amber-500" />
+                 </div>
+                 <h2 className="serif-font text-2xl font-bold text-[#3D2B1F] mb-4">试炼灵石已耗尽</h2>
+                 <p className="text-xs text-[#A67B5B] leading-relaxed mb-8">
+                   您的 10 章试读额度已使用完毕。为了保证社群公平性，继续修行需晋升为【宗门真传】会员。
+                 </p>
+                 <div className="space-y-4">
+                    <button onClick={() => navigate('/profile')} className="w-full bg-[#3D2B1F] text-white py-4 rounded-2xl font-bold shadow-xl active:scale-95 transition-all flex items-center justify-center space-x-2">
+                       <span>立即晋升会员</span>
+                       <ArrowRight size={18} />
+                    </button>
+                    <button onClick={() => navigate('/')} className="w-full text-[10px] font-bold text-[#A67B5B] uppercase tracking-widest">返回书架</button>
+                 </div>
+              </div>
+              <Sparkles className="absolute -right-8 -bottom-8 text-amber-500/5" size={160} />
+           </div>
+        </div>
+      )}
+
       {/* Reader Header */}
       <div className="flex items-center justify-between mb-8 sticky top-0 py-4 bg-[#FDFBF9]/90 backdrop-blur-md z-30 border-b border-[#F4ECE4]/30">
         <div className="flex items-center space-x-1">
@@ -178,7 +222,7 @@ const Reader: React.FC<ReaderProps> = ({ stories, progress, isGenerating, onColl
             <List size={18} /><span className="text-[10px] font-bold">目录</span>
           </button>
           <button onClick={() => setShowShareModal(true)} className="p-2 hover:bg-[#F4ECE4] rounded-full text-[#A67B5B] flex items-center space-x-1">
-            <Share2 size={16} /><span className="text-[10px] font-bold">分享</span>
+            <Share2 size={16} /><span className="text-[10px] font-bold">刻录</span>
           </button>
         </div>
         
@@ -198,7 +242,8 @@ const Reader: React.FC<ReaderProps> = ({ stories, progress, isGenerating, onColl
         </button>
       </div>
 
-      <div className="flex-grow">
+      <div className={`flex-grow ${isLocked ? 'blur-md pointer-events-none grayscale' : ''}`}>
+        {/* Title area */}
         <div className="text-center mb-8 px-4">
           <div className="flex items-center justify-center space-x-2 mb-2">
              <div className="h-px w-8 bg-[#A67B5B]/20" />
@@ -258,20 +303,25 @@ const Reader: React.FC<ReaderProps> = ({ stories, progress, isGenerating, onColl
            <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 shadow-2xl relative overflow-hidden">
               <div className="relative z-10">
                 <div className="flex justify-between items-center mb-6">
-                   <h3 className="serif-font text-xl font-bold text-[#3D2B1F]">刻录剧本秘钥</h3>
+                   <h3 className="serif-font text-xl font-bold text-[#3D2B1F]">
+                     {story.isUserGenerated ? '刻录私人密档' : '发布宗门秘钥'}
+                   </h3>
                    <button onClick={() => setShowShareModal(false)}><X size={20} className="text-gray-300" /></button>
                 </div>
-                <p className="text-[11px] text-gray-500 mb-6 leading-relaxed">
-                  该秘钥包含本章节的剧情及关联雅思词汇。分享给好友，对方在首页粘贴即可阅读。
-                </p>
-                <div className="bg-[#FAF7F2] p-4 rounded-2xl border border-[#F4ECE4] break-all font-mono text-[8px] max-h-32 overflow-y-auto mb-6 text-gray-400 select-all">
+                <div className="p-4 bg-[#FAF7F2] rounded-2xl border border-[#F4ECE4] flex items-start space-x-3 mb-6">
+                   <ShieldAlert className="text-[#A67B5B] shrink-0 w-4 h-4 mt-0.5" />
+                   <p className="text-[10px] text-[#6F4E37] leading-relaxed font-medium">
+                     防伪警示：所有剧本均受“解析权限”保护。您的好友需拥有【宗门会员】身份方可解密此代码。
+                   </p>
+                </div>
+                <div className="bg-[#FDFBF9] p-4 rounded-2xl border border-[#F4ECE4] break-all font-mono text-[8px] max-h-32 overflow-y-auto mb-6 text-gray-300 select-all border-dashed">
                   {generateShareKey()}
                 </div>
                 <button 
                   onClick={handleCopyKey}
                   className="w-full bg-[#3D2B1F] text-white py-4 rounded-2xl font-bold flex items-center justify-center space-x-2 shadow-lg active:scale-95 transition-all"
                 >
-                  {hasCopied ? <><Check size={18}/><span>已复制到剪贴板</span></> : <><Copy size={18}/><span>复制秘钥</span></>}
+                  {hasCopied ? <><Check size={18}/><span>秘钥已生成</span></> : <><Copy size={18}/><span>复制秘钥代码</span></>}
                 </button>
               </div>
               <Sparkles className="absolute -right-8 -bottom-8 text-[#A67B5B]/5" size={120} />
