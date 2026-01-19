@@ -20,10 +20,13 @@ import {
   Pause,
   Headphones,
   Zap,
-  Turtle
+  Turtle,
+  Share2,
+  Copy,
+  Check
 } from 'lucide-react';
 
-// --- Audio Decoding Helpers ---
+// --- Audio & Serialization Helpers ---
 function decodeBase64(base64: string) {
   const binaryString = atob(base64);
   const bytes = new Uint8Array(binaryString.length);
@@ -58,8 +61,10 @@ const Reader: React.FC<ReaderProps> = ({ stories, progress, isGenerating, onColl
   const navigate = useNavigate();
   const [selectedWord, setSelectedWord] = useState<VocabularyWord | null>(null);
   const [showChapters, setShowChapters] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [hasCopied, setHasCopied] = useState(false);
   const [isPlayingFull, setIsPlayingFull] = useState(false);
-  const [audioLoading, setAudioLoading] = useState<string | null>(null); // 'standard' | 'slow' | 'full' | null
+  const [audioLoading, setAudioLoading] = useState<string | null>(null);
   
   const audioContextRef = useRef<AudioContext | null>(null);
   const sourceNodeRef = useRef<AudioBufferSourceNode | null>(null);
@@ -106,20 +111,15 @@ const Reader: React.FC<ReaderProps> = ({ stories, progress, isGenerating, onColl
       stopAudio();
       return;
     }
-
     setAudioLoading(type);
     try {
       if (!audioContextRef.current) {
         audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
       }
-
-      // 关键修复：统一使用 geminiService，确保代理 (baseUrl) 有效
       const base64Audio = await geminiService.generateTTS(text, type);
-
       if (base64Audio) {
         const audioBuffer = await decodeAudioData(decodeBase64(base64Audio), audioContextRef.current);
         stopAudio();
-        
         const source = audioContextRef.current.createBufferSource();
         source.buffer = audioBuffer;
         source.connect(audioContextRef.current.destination);
@@ -127,15 +127,11 @@ const Reader: React.FC<ReaderProps> = ({ stories, progress, isGenerating, onColl
           if (type === 'full') setIsPlayingFull(false);
           setAudioLoading(null);
         };
-        
         source.start(0);
         sourceNodeRef.current = source;
         if (type === 'full') setIsPlayingFull(true);
-      } else {
-        throw new Error("No audio data returned");
       }
     } catch (error) {
-      console.error("TTS Fallback Activated:", error);
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.rate = type === 'slow' ? 0.4 : 0.85; 
       utterance.lang = 'en-GB';
@@ -144,12 +140,33 @@ const Reader: React.FC<ReaderProps> = ({ stories, progress, isGenerating, onColl
     }
   };
 
-  if (!story) return null;
-
-  const handleWordClick = (wordId: string) => {
-    const word = story.vocabulary.find(v => v.id === wordId);
-    if (word) setSelectedWord(word);
+  const generateShareKey = () => {
+    if (!story) return '';
+    // 仅打包核心剧情数据以控制长度
+    const payload = {
+      type: 'STORY_KEY',
+      data: {
+        title: story.title,
+        tagline: story.tagline,
+        genre: story.genre,
+        immersionContent: story.immersionContent,
+        blindContent: story.blindContent,
+        vocabulary: story.vocabulary,
+        coverImage: story.coverImage
+      }
+    };
+    const jsonStr = JSON.stringify(payload);
+    return btoa(unescape(encodeURIComponent(jsonStr)));
   };
+
+  const handleCopyKey = () => {
+    const key = generateShareKey();
+    navigator.clipboard.writeText(key);
+    setHasCopied(true);
+    setTimeout(() => setHasCopied(false), 2000);
+  };
+
+  if (!story) return null;
 
   return (
     <div className="animate-in fade-in duration-500 pb-24">
@@ -158,7 +175,10 @@ const Reader: React.FC<ReaderProps> = ({ stories, progress, isGenerating, onColl
         <div className="flex items-center space-x-1">
           <button onClick={() => navigate(-1)} className="p-2 hover:bg-[#F4ECE4] rounded-full text-[#6F4E37]"><ArrowLeft className="w-5 h-5" /></button>
           <button onClick={() => setShowChapters(true)} className="p-2 hover:bg-[#F4ECE4] rounded-full text-[#A67B5B] flex items-center space-x-1">
-            <List size={18} /><span className="text-[10px] font-bold">集目录</span>
+            <List size={18} /><span className="text-[10px] font-bold">目录</span>
+          </button>
+          <button onClick={() => setShowShareModal(true)} className="p-2 hover:bg-[#F4ECE4] rounded-full text-[#A67B5B] flex items-center space-x-1">
+            <Share2 size={16} /><span className="text-[10px] font-bold">分享</span>
           </button>
         </div>
         
@@ -174,7 +194,7 @@ const Reader: React.FC<ReaderProps> = ({ stories, progress, isGenerating, onColl
           ) : (
             <Headphones size={14} />
           )}
-          <span className="text-[10px] font-bold tracking-widest">{isPlayingFull ? '暂停修行' : '雅思精听'}</span>
+          <span className="text-[10px] font-bold tracking-widest">{isPlayingFull ? '暂停' : '精听'}</span>
         </button>
       </div>
 
@@ -195,7 +215,10 @@ const Reader: React.FC<ReaderProps> = ({ stories, progress, isGenerating, onColl
               <span key={idx}>
                 {part.type === 'text' ? part.content : (
                   <button 
-                    onClick={() => handleWordClick(part.wordId!)}
+                    onClick={() => {
+                      const word = story.vocabulary.find(v => v.id === part.wordId);
+                      if (word) setSelectedWord(word);
+                    }}
                     className="relative inline-block mx-1 font-bold text-[#3D2B1F] transition-all hover:text-[#A67B5B]"
                   >
                     <span className="relative z-10">{part.content}</span>
@@ -223,11 +246,38 @@ const Reader: React.FC<ReaderProps> = ({ stories, progress, isGenerating, onColl
                disabled={isGenerating}
                className={`py-5 bg-[#3D2B1F] text-white rounded-2xl font-bold flex items-center justify-center space-x-2 shadow-xl active:scale-95 transition-all disabled:opacity-50 ${story.prevId ? 'col-span-1' : 'col-span-2'}`}
              >
-               {isGenerating ? <Loader2 className="animate-spin" size={18} /> : (story.nextId ? <><span>续看下章</span><ArrowRight size={18} /></> : <><Sparkles size={18} className="text-[#A67B5B]" /><span>开启下章</span></>)}
+               {isGenerating ? <Loader2 className="animate-spin" size={18} /> : (story.nextId ? <><span>下章剧情</span><ArrowRight size={18} /></> : <><Sparkles size={18} className="text-[#A67B5B]" /><span>开启下章</span></>)}
              </button>
           </div>
         </div>
       </div>
+
+      {/* Share Modal */}
+      {showShareModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center px-6 bg-[#3D2B1F]/60 backdrop-blur-sm animate-in fade-in">
+           <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 shadow-2xl relative overflow-hidden">
+              <div className="relative z-10">
+                <div className="flex justify-between items-center mb-6">
+                   <h3 className="serif-font text-xl font-bold text-[#3D2B1F]">刻录剧本秘钥</h3>
+                   <button onClick={() => setShowShareModal(false)}><X size={20} className="text-gray-300" /></button>
+                </div>
+                <p className="text-[11px] text-gray-500 mb-6 leading-relaxed">
+                  该秘钥包含本章节的剧情及关联雅思词汇。分享给好友，对方在首页粘贴即可阅读。
+                </p>
+                <div className="bg-[#FAF7F2] p-4 rounded-2xl border border-[#F4ECE4] break-all font-mono text-[8px] max-h-32 overflow-y-auto mb-6 text-gray-400 select-all">
+                  {generateShareKey()}
+                </div>
+                <button 
+                  onClick={handleCopyKey}
+                  className="w-full bg-[#3D2B1F] text-white py-4 rounded-2xl font-bold flex items-center justify-center space-x-2 shadow-lg active:scale-95 transition-all"
+                >
+                  {hasCopied ? <><Check size={18}/><span>已复制到剪贴板</span></> : <><Copy size={18}/><span>复制秘钥</span></>}
+                </button>
+              </div>
+              <Sparkles className="absolute -right-8 -bottom-8 text-[#A67B5B]/5" size={120} />
+           </div>
+        </div>
+      )}
 
       {/* Word Details Overlay */}
       {selectedWord && (
@@ -243,21 +293,13 @@ const Reader: React.FC<ReaderProps> = ({ stories, progress, isGenerating, onColl
               </div>
 
               <div className="flex space-x-3 mb-8">
-                <button 
-                  onClick={() => playTTS(selectedWord.word, 'standard')}
-                  disabled={!!audioLoading}
-                  className="flex-1 flex items-center justify-center space-x-2 py-3 bg-[#FAF7F2] border border-[#F4ECE4] rounded-xl text-[#3D2B1F] active:bg-[#F4ECE4] transition-all hover:border-[#A67B5B]/30"
-                >
+                <button onClick={() => playTTS(selectedWord.word, 'standard')} disabled={!!audioLoading} className="flex-1 flex items-center justify-center space-x-2 py-3 bg-[#FAF7F2] border border-[#F4ECE4] rounded-xl text-[#3D2B1F] active:bg-[#F4ECE4] transition-all hover:border-[#A67B5B]/30">
                   {audioLoading === 'standard' ? <Loader2 size={16} className="animate-spin" /> : <Volume2 size={16} className="text-[#A67B5B]" />}
-                  <span className="text-[11px] font-bold">标准读音</span>
+                  <span className="text-[11px] font-bold">标准</span>
                 </button>
-                <button 
-                  onClick={() => playTTS(selectedWord.word, 'slow')}
-                  disabled={!!audioLoading}
-                  className="flex-1 flex items-center justify-center space-x-2 py-3 bg-[#FAF7F2] border border-[#F4ECE4] rounded-xl text-[#3D2B1F] active:bg-[#F4ECE4] transition-all hover:border-[#A67B5B]/30"
-                >
+                <button onClick={() => playTTS(selectedWord.word, 'slow')} disabled={!!audioLoading} className="flex-1 flex items-center justify-center space-x-2 py-3 bg-[#FAF7F2] border border-[#F4ECE4] rounded-xl text-[#3D2B1F] active:bg-[#F4ECE4] transition-all hover:border-[#A67B5B]/30">
                   {audioLoading === 'slow' ? <Loader2 size={16} className="animate-spin" /> : <Turtle size={16} className="text-[#A67B5B]" />}
-                  <span className="text-[11px] font-bold">慢速拆解</span>
+                  <span className="text-[11px] font-bold">慢速</span>
                 </button>
               </div>
 
@@ -267,11 +309,8 @@ const Reader: React.FC<ReaderProps> = ({ stories, progress, isGenerating, onColl
                   <p className="text-md font-bold text-[#3D2B1F]">{selectedWord.translation}</p>
                 </section>
                 <section>
-                  <h3 className="text-[10px] font-bold uppercase tracking-widest text-[#A67B5B] mb-1">精英语境 (点击朗读)</h3>
-                  <p 
-                    onClick={() => playTTS(selectedWord.example, 'standard')}
-                    className="text-xs text-[#6F4E37] leading-relaxed italic border-l-2 border-[#A67B5B]/20 pl-3 cursor-pointer hover:bg-[#FAF7F2] p-1 rounded transition-colors"
-                  >
+                  <h3 className="text-[10px] font-bold uppercase tracking-widest text-[#A67B5B] mb-1">精英语境</h3>
+                  <p onClick={() => playTTS(selectedWord.example, 'standard')} className="text-xs text-[#6F4E37] leading-relaxed italic border-l-2 border-[#A67B5B]/20 pl-3 cursor-pointer hover:bg-[#FAF7F2] p-1 rounded transition-colors">
                     "{selectedWord.example}"
                   </p>
                 </section>
@@ -284,7 +323,7 @@ const Reader: React.FC<ReaderProps> = ({ stories, progress, isGenerating, onColl
                 </button>
                 <button onClick={() => onMaster(selectedWord.id)} className={`flex items-center justify-center space-x-2 py-4 rounded-2xl text-xs font-bold border transition-all ${progress.masteredWords.includes(selectedWord.id) ? 'bg-[#F4ECE4] border-[#A67B5B]/20 text-[#6F4E37]' : 'bg-white border-[#F4ECE4] text-gray-500'}`}>
                   <CheckCircle className={`w-3.5 h-3.5 ${progress.masteredWords.includes(selectedWord.id) ? 'fill-[#A67B5B]' : ''}`} />
-                  <span>{progress.masteredWords.includes(selectedWord.id) ? '已掌握' : '标记掌握'}</span>
+                  <span>{progress.masteredWords.includes(selectedWord.id) ? '已掌握' : '掌握'}</span>
                 </button>
               </div>
             </div>
@@ -298,10 +337,9 @@ const Reader: React.FC<ReaderProps> = ({ stories, progress, isGenerating, onColl
            <div className="relative w-4/5 max-w-xs bg-white h-full shadow-2xl animate-in slide-in-from-left duration-300 flex flex-col">
               <div className="p-6 border-b border-[#F4ECE4]">
                  <div className="flex justify-between items-center mb-2">
-                    <h3 className="serif-font text-lg font-bold text-[#3D2B1F]">本系列章节</h3>
+                    <h3 className="serif-font text-lg font-bold text-[#3D2B1F]">章节目录</h3>
                     <button onClick={() => setShowChapters(false)}><X size={20} className="text-gray-300" /></button>
                  </div>
-                 <p className="text-[10px] text-[#A67B5B] font-bold uppercase tracking-widest">Series Chapters</p>
               </div>
               <div className="flex-grow overflow-y-auto p-4 space-y-2">
                  {seriesChapters.map((ch, idx) => (
@@ -310,7 +348,7 @@ const Reader: React.FC<ReaderProps> = ({ stories, progress, isGenerating, onColl
                       onClick={() => { navigate(`/reader/${ch.id}`); setShowChapters(false); }}
                       className={`w-full text-left p-4 rounded-2xl transition-all border ${ch.id === story.id ? 'bg-[#3D2B1F] text-white border-[#3D2B1F] shadow-lg' : 'bg-[#FAF7F2] border-[#F4ECE4] text-[#3D2B1F]'}`}
                     >
-                       <p className="text-[9px] font-black uppercase tracking-wider opacity-60 mb-1">Chapter {idx + 1}</p>
+                       <p className="text-[9px] font-black uppercase tracking-wider opacity-60 mb-1">Episode {idx + 1}</p>
                        <p className="text-xs font-bold line-clamp-1">{ch.title}</p>
                     </button>
                  ))}
