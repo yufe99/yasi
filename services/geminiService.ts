@@ -3,10 +3,15 @@ import { Story, VocabularyBankEntry } from "../types";
 
 export class GeminiService {
   private getAI() {
-    const config: any = { apiKey: process.env.API_KEY };
+    // 优先级：用户手动配置的代理 > 环境变量内置代理 > 官方默认
+    const proxyOverride = localStorage.getItem('lexitale_api_proxy');
+    const apiKey = process.env.API_KEY || '';
     
-    // 关键修复：确保语音功能也使用代理
-    if (process.env.API_BASE_URL) {
+    const config: any = { apiKey };
+    
+    if (proxyOverride) {
+      config.baseUrl = proxyOverride;
+    } else if (process.env.API_BASE_URL) {
       config.baseUrl = process.env.API_BASE_URL;
     }
     
@@ -25,7 +30,6 @@ export class GeminiService {
     if (type === 'full') {
       prompt = `Read the following story slowly and clearly for an IELTS learner. Maintain a sophisticated and professional tone: ${text}`;
     } else if (type === 'slow') {
-      // 增强提示词，强制模型产生更慢的节奏
       prompt = `Pronounce this word VERY SLOWLY, clearly enunciating every single syllable. BREAK IT DOWN for a learner: ${text}`;
     } else {
       prompt = `Pronounce this word clearly at a standard professional speed: ${text}`;
@@ -64,7 +68,7 @@ export class GeminiService {
 
     要求：
     1. 标题（title）：吸引人的中文爽文标题。
-    2. 沉浸读内容（immersionContent）：全中文剧情，节奏极快，反转强烈。将挑选的英文单词自然嵌入，不要生硬。
+    2. 沉浸读内容（immersionContent）：全中文剧情，节奏极快，反转强烈。将挑选的英文单词自然嵌入。
     3. 词汇表（vocabulary）：必须包含你挑选的单词，信息与词库一致。
     4. 输出格式：纯 JSON 格式。`;
 
@@ -102,18 +106,8 @@ export class GeminiService {
       .map(p => p.content)
       .join('');
 
-    const prompt = `你正在续写一部名为《${previousStory.title}》的雅思爽文。
-    
-    前情提提要：
-    "${prevContent}"
-    
-    任务：创作下一章。
-    要求：
-    1. 保持人设和风格的一致性。
-    2. 引入 5 个左右新的高级雅思词汇（Band 7-9）。
-    3. 剧情要有新的张力和反转。
-    4. 封面图：返回 "RANDOM_PLACEHOLDER"。
-    
+    const prompt = `你正在续写一部名为《${previousStory.title}》的雅思爽文。前情提要： "${prevContent}"。
+    任务：创作下一章。要求：保持风格一致，引入 5 个新高级雅思词汇，要有反转。
     输出格式：JSON。`;
 
     const ai = this.getAI();
